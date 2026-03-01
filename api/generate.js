@@ -8,42 +8,6 @@ export default async function handler(req, res) {
   const { prompt, bpm, steps } = req.body;
   const n = parseInt(steps) || 16;
 
-  function createFallbackPattern() {
-    const empty = () => Array(n).fill(false);
-
-    const pattern = {
-      kick: empty(),
-      snare: empty(),
-      hihat_c: empty(),
-      hihat_o: empty(),
-      clap: empty(),
-      perc1: empty(),
-      perc2: empty(),
-      bass808: empty(),
-      lead: empty(),
-      pad: empty(),
-      arp: empty()
-    };
-
-    // Kick básico
-    pattern.kick[0] = true;
-    if (n > 8) pattern.kick[8] = true;
-
-    // Snare clásica
-    if (n > 4) pattern.snare[4] = true;
-    if (n > 12) pattern.snare[12] = true;
-
-    // Hi-hat constante
-    for (let i = 0; i < n; i += 2) {
-      pattern.hihat_c[i] = true;
-    }
-
-    // 808 sigue kick
-    pattern.bass808 = [...pattern.kick];
-
-    return pattern;
-  }
-
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -52,43 +16,35 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'llama3-8b-8192',
+        model: 'llama3-70b-8192',
+        temperature: 0.9,
+        response_format: { type: "json_object" },
         messages: [
           {
+            role: 'system',
+            content: `You are an expert trap producer.
+Return ONLY raw JSON.
+Each key must have exactly ${n} boolean values.
+Keys: kick, snare, hihat_c, hihat_o, clap, perc1, perc2, bass808, lead, pad, arp.`
+          },
+          {
             role: 'user',
-            content: `Return ONLY valid JSON. Generate a trap beat pattern with ${n} boolean steps per array.
-Keys: kick, snare, hihat_c, hihat_o, clap, perc1, perc2, bass808, lead, pad, arp.
-Kick[0]=true. Snare[4] and Snare[12]=true.`
+            content: `Style: ${prompt}. BPM: ${bpm}.
+Rules:
+- Kick 0 = true
+- Snare 4 and 12 = true
+- 808 follows kick but with variation
+- Hi-hats dynamic and energetic`
           }
         ],
-        temperature: 0.4,
-        max_tokens: 800
+        max_tokens: 1200
       })
     });
 
     const data = await response.json();
-    const text = data.choices?.[0]?.message?.content || '';
-
-    const match = text.match(/\{[\s\S]*\}/);
-
-    if (!match) {
-      console.log("No JSON returned, using fallback");
-      return res.status(200).json({ pattern: createFallbackPattern() });
-    }
-
-    let pattern;
-
-    try {
-      pattern = JSON.parse(match[0]);
-    } catch (err) {
-      console.log("JSON parse failed, using fallback");
-      return res.status(200).json({ pattern: createFallbackPattern() });
-    }
+    const pattern = JSON.parse(data.choices[0].message.content);
 
     Object.keys(pattern).forEach(key => {
-      if (!Array.isArray(pattern[key])) {
-        pattern[key] = Array(n).fill(false);
-      }
       while (pattern[key].length < n) pattern[key].push(false);
       pattern[key] = pattern[key].slice(0, n);
     });
@@ -96,7 +52,7 @@ Kick[0]=true. Snare[4] and Snare[12]=true.`
     res.status(200).json({ pattern });
 
   } catch (err) {
-    console.error("Groq error:", err.message);
-    res.status(200).json({ pattern: createFallbackPattern() });
+    console.error("REAL ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
 }
