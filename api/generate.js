@@ -5,8 +5,32 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).end();
 
-  const { prompt, bpm, steps } = req.body;
+  const { prompt, steps } = req.body;
   const n = parseInt(steps) || 16;
+
+  function fallbackPattern() {
+    const empty = () => Array(n).fill(false);
+    const pattern = {
+      kick: empty(),
+      snare: empty(),
+      hihat_c: empty(),
+      hihat_o: empty(),
+      clap: empty(),
+      perc1: empty(),
+      perc2: empty(),
+      bass808: empty(),
+      lead: empty(),
+      pad: empty(),
+      arp: empty()
+    };
+    pattern.kick[0] = true;
+    if (n>8) pattern.kick[8] = true;
+    if (n>4) pattern.snare[4] = true;
+    if (n>12) pattern.snare[12] = true;
+    for(let i=0;i<n;i+=2) pattern.hihat_c[i]=true;
+    pattern.bass808 = [...pattern.kick];
+    return pattern;
+  }
 
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -16,43 +40,42 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'llama3-70b-8192',
-        temperature: 0.9,
-        response_format: { type: "json_object" },
+        model: 'llama3-8b-8192',
         messages: [
-          {
-            role: 'system',
-            content: `You are an expert trap producer.
-Return ONLY raw JSON.
-Each key must have exactly ${n} boolean values.
-Keys: kick, snare, hihat_c, hihat_o, clap, perc1, perc2, bass808, lead, pad, arp.`
-          },
-          {
-            role: 'user',
-            content: `Style: ${prompt}. BPM: ${bpm}.
-Rules:
-- Kick 0 = true
-- Snare 4 and 12 = true
-- 808 follows kick but with variation
-- Hi-hats dynamic and energetic`
-          }
+          { role: 'user', content: `Return ONLY JSON. Generate trap beat with ${n} steps.` }
         ],
-        max_tokens: 1200
+        temperature: 0.8,
+        max_tokens: 800
       })
     });
 
     const data = await response.json();
-    const pattern = JSON.parse(data.choices[0].message.content);
+
+    // Protección: si no hay choices, usamos fallback
+    if (!data.choices || !data.choices[0]?.message?.content) {
+      console.log("⚠️ Groq response invalid, using fallback", JSON.stringify(data));
+      return res.status(200).json({ pattern: fallbackPattern() });
+    }
+
+    const text = data.choices[0].message.content;
+
+    let pattern;
+    try {
+      pattern = JSON.parse(text);
+    } catch(e) {
+      console.log("⚠️ JSON parse failed, using fallback", text.substring(0,200));
+      pattern = fallbackPattern();
+    }
 
     Object.keys(pattern).forEach(key => {
-      while (pattern[key].length < n) pattern[key].push(false);
-      pattern[key] = pattern[key].slice(0, n);
+      while(pattern[key].length<n) pattern[key].push(false);
+      pattern[key] = pattern[key].slice(0,n);
     });
 
     res.status(200).json({ pattern });
 
-  } catch (err) {
-    console.error("REAL ERROR:", err);
-    res.status(500).json({ error: err.message });
+  } catch(err) {
+    console.log("⚠️ Fetch failed, using fallback", err.message);
+    res.status(200).json({ pattern: fallbackPattern() });
   }
 }
