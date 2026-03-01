@@ -6,16 +6,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
   const { prompt, bpm, steps, vibeParams } = req.body;
-
-  const systemPrompt = `Eres TRAPGEN AI. Generas patrones de beat de trap.
-Responde SOLO con JSON. Sin markdown. Sin explicaciones. Sin texto extra.
-BPM: ${bpm}. Steps: ${steps}.
-Oscuridad: ${vibeParams?.dark||70}/100. Energía: ${vibeParams?.energy||80}/100.
-
-El JSON debe tener exactamente ${steps} valores true/false en cada array.
-Kick en step 0 siempre. Snare en steps 4 y 12. Hi-hats densos. 808 sigue al kick.
-
-{"kick":[...],"snare":[...],"hihat_c":[...],"hihat_o":[...],"clap":[...],"perc1":[...],"perc2":[...],"bass808":[...],"lead":[...],"pad":[...],"arp":[...]}`;
+  const n = parseInt(steps) || 16;
 
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -27,29 +18,37 @@ Kick en step 0 siempre. Snare en steps 4 y 12. Hi-hats densos. 808 sigue al kick
       body: JSON.stringify({
         model: 'llama3-8b-8192',
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt || 'trap oscuro 808 heavy' }
+          {
+            role: 'user',
+            content: `Generate a trap beat pattern as JSON. Style: ${prompt || 'dark trap heavy 808'}. BPM: ${bpm}. 
+Return ONLY a raw JSON object with no explanation, no markdown, no code blocks.
+Each key must have exactly ${n} boolean values.
+Rules: kick[0]=true always, snare[4]=true and snare[${n===16?12:n/2+4}]=true always, bass808 follows kick pattern.
+Keys: kick, snare, hihat_c, hihat_o, clap, perc1, perc2, bass808, lead, pad, arp.
+Example format: {"kick":[true,false,false,false,false,false,false,false,true,false,true,false,false,false,false,false],"snare":[false,false,false,false,true,false,false,false,false,false,false,false,true,false,false,false],...}`
+          }
         ],
-        temperature: 0.7,
-        max_tokens: 800
+        temperature: 0.5,
+        max_tokens: 1000,
+        response_format: { type: "json_object" }
       })
     });
 
     const data = await response.json();
-    const text = data.choices?.[0]?.message?.content || '';
+    console.log('Groq response:', JSON.stringify(data));
     
-    // Extraer JSON aunque venga con markdown
+    const text = data.choices?.[0]?.message?.content || '';
+    console.log('Text:', text);
+    
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON found in response');
+    if (!match) throw new Error('No JSON: ' + text.substring(0, 200));
     
     const pattern = JSON.parse(match[0]);
-    
-    // Asegurar que todos los arrays tienen exactamente `steps` elementos
-    const stepsNum = parseInt(steps) || 16;
+
     Object.keys(pattern).forEach(key => {
       if (Array.isArray(pattern[key])) {
-        while (pattern[key].length < stepsNum) pattern[key].push(false);
-        pattern[key] = pattern[key].slice(0, stepsNum);
+        while (pattern[key].length < n) pattern[key].push(false);
+        pattern[key] = pattern[key].slice(0, n);
       }
     });
 
