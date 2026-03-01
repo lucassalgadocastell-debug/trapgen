@@ -11,17 +11,9 @@ export default async function handler(req, res) {
   function fallbackPattern() {
     const empty = () => Array(n).fill(false);
     const pattern = {
-      kick: empty(),
-      snare: empty(),
-      hihat_c: empty(),
-      hihat_o: empty(),
-      clap: empty(),
-      perc1: empty(),
-      perc2: empty(),
-      bass808: empty(),
-      lead: empty(),
-      pad: empty(),
-      arp: empty()
+      kick: empty(), snare: empty(), hihat_c: empty(), hihat_o: empty(),
+      clap: empty(), perc1: empty(), perc2: empty(), bass808: empty(),
+      lead: empty(), pad: empty(), arp: empty()
     };
     pattern.kick[0] = true;
     if (n>8) pattern.kick[8] = true;
@@ -42,40 +34,58 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: 'llama3-8b-8192',
         messages: [
-          { role: 'user', content: `Return ONLY JSON. Generate trap beat with ${n} steps.` }
+          {
+            role: 'system',
+            content: 'You are a professional trap producer AI. Generate trap beats as JSON only.'
+          },
+          {
+            role: 'user',
+            content: `Generate a trap beat pattern as JSON.
+Style: ${prompt || 'dark trap 808 heavy hi-hats'}.
+Keys: kick, snare, hihat_c, hihat_o, clap, perc1, perc2, bass808, lead, pad, arp.
+Each key must have exactly ${n} boolean values (true/false).
+Rules:
+- kick[0]=true
+- snare[4] and snare[${n===16?12:Math.floor(n/2)+4}]=true
+- bass808 follows kick
+- hi-hats dense, hi-hat_o occasional, clap/perc optional
+Return only JSON, no explanations, no markdown.`
+          }
         ],
-        temperature: 0.8,
-        max_tokens: 800
+        temperature: 0.9,
+        max_tokens: 1000
       })
     });
 
     const data = await response.json();
 
-    // Protección: si no hay choices, usamos fallback
-    if (!data.choices || !data.choices[0]?.message?.content) {
-      console.log("⚠️ Groq response invalid, using fallback", JSON.stringify(data));
-      return res.status(200).json({ pattern: fallbackPattern() });
-    }
-
-    const text = data.choices[0].message.content;
-
+    const text = data.choices?.[0]?.message?.content || '';
+    const match = text.match(/\{[\s\S]*\}/); // Extrae cualquier JSON dentro del texto
     let pattern;
-    try {
-      pattern = JSON.parse(text);
-    } catch(e) {
-      console.log("⚠️ JSON parse failed, using fallback", text.substring(0,200));
+
+    if (!match) {
+      console.log("⚠️ No JSON found, using fallback");
       pattern = fallbackPattern();
+    } else {
+      try {
+        pattern = JSON.parse(match[0]);
+      } catch (err) {
+        console.log("⚠️ JSON parse failed, using fallback");
+        pattern = fallbackPattern();
+      }
     }
 
+    // Aseguramos longitud correcta
     Object.keys(pattern).forEach(key => {
-      while(pattern[key].length<n) pattern[key].push(false);
+      if (!Array.isArray(pattern[key])) pattern[key] = Array(n).fill(false);
+      while (pattern[key].length<n) pattern[key].push(false);
       pattern[key] = pattern[key].slice(0,n);
     });
 
     res.status(200).json({ pattern });
 
   } catch(err) {
-    console.log("⚠️ Fetch failed, using fallback", err.message);
+    console.log("⚠️ Fetch error, using fallback", err.message);
     res.status(200).json({ pattern: fallbackPattern() });
   }
 }
