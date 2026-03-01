@@ -7,22 +7,14 @@ export default async function handler(req, res) {
 
   const { prompt, bpm, steps, vibeParams } = req.body;
 
-  const systemPrompt = `Eres TRAPGEN AI, el mejor generador de patrones de beat de trap del mundo. Piensas como Metro Boomin, Southside y Wheezy.
+  const systemPrompt = `Eres TRAPGEN AI. Generas patrones de beat de trap.
+Responde SOLO con JSON. Sin markdown. Sin explicaciones. Sin texto extra.
+BPM: ${bpm}. Steps: ${steps}.
+Oscuridad: ${vibeParams?.dark||70}/100. Energía: ${vibeParams?.energy||80}/100.
 
-REGLAS:
-- Responde ÚNICAMENTE con JSON válido. Sin texto extra. Sin markdown. Sin explicaciones.
-- Kick: step 0 siempre, step 8 casi siempre, variaciones sincopadas
-- Snare: steps 4 y 12 son sagrados
-- Hi-hats: densos y rápidos, triplete cuando pida energía
-- 808 bass: sigue al kick, es el alma del trap
-- Dark trap: más espacio, menos densidad
-- Phonk: kick sincopado, hh ultra rápido
-- Melodic: lead activo, pad suave
-- Hard: kick doble, hh muy denso
-- BPM: ${bpm}, Steps: ${steps}
-- Oscuridad: ${vibeParams?.dark||70}/100, Energía: ${vibeParams?.energy||80}/100, Melodía: ${vibeParams?.melody||55}/100, 808: ${vibeParams?.bass808||90}/100
+El JSON debe tener exactamente ${steps} valores true/false en cada array.
+Kick en step 0 siempre. Snare en steps 4 y 12. Hi-hats densos. 808 sigue al kick.
 
-RESPONDE SOLO CON ESTE JSON (exactamente ${steps} valores true/false en cada array):
 {"kick":[...],"snare":[...],"hihat_c":[...],"hihat_o":[...],"clap":[...],"perc1":[...],"perc2":[...],"bass808":[...],"lead":[...],"pad":[...],"arp":[...]}`;
 
   try {
@@ -36,21 +28,35 @@ RESPONDE SOLO CON ESTE JSON (exactamente ${steps} valores true/false en cada arr
         model: 'llama3-8b-8192',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt || 'trap oscuro 808 heavy hi-hats rápidos' }
+          { role: 'user', content: prompt || 'trap oscuro 808 heavy' }
         ],
-        temperature: 0.8,
-        max_tokens: 512
+        temperature: 0.7,
+        max_tokens: 800
       })
     });
 
     const data = await response.json();
     const text = data.choices?.[0]?.message?.content || '';
-    const clean = text.replace(/```json|```/g, '').trim();
-    const pattern = JSON.parse(clean);
+    
+    // Extraer JSON aunque venga con markdown
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('No JSON found in response');
+    
+    const pattern = JSON.parse(match[0]);
+    
+    // Asegurar que todos los arrays tienen exactamente `steps` elementos
+    const stepsNum = parseInt(steps) || 16;
+    Object.keys(pattern).forEach(key => {
+      if (Array.isArray(pattern[key])) {
+        while (pattern[key].length < stepsNum) pattern[key].push(false);
+        pattern[key] = pattern[key].slice(0, stepsNum);
+      }
+    });
+
     res.status(200).json({ pattern });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Generation failed' });
+    console.error('Error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 }
